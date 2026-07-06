@@ -4,7 +4,10 @@
 문서 이미지 속 이름·주민등록번호·계좌번호·카드번호·주소 등을 탐지해 임의의
 합성값으로 교체하고, 학습용 라벨(바운딩박스 + 엔티티 타입)을 생성한다.
 
-전체 계획은 [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) 참조.
+- 전체 계획: [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md)
+- **내부망 개발 인수인계 (현 상태·설계 근거·다음 작업): [docs/HANDOFF.md](docs/HANDOFF.md)**
+- 로컬 테스트 가이드 (PowerShell): [docs/LOCAL_TESTING.md](docs/LOCAL_TESTING.md)
+- Cline 등 AI 어시스턴트용 프로젝트 규칙: [.clinerules](.clinerules)
 
 ## 현재 상태 (Phase 1 PoC)
 

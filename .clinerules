@@ -1,0 +1,52 @@
+# Grape — 문서 이미지 개인정보(PII) 치환 파이프라인
+
+문서 이미지에서 PII(이름/주민번호/계좌/카드/주소/생년월일 등)를 탐지해
+체크섬 유효한 합성값으로 교체한 이미지 + 라벨(bbox/타입)을 생성하는 프로젝트.
+폐쇄망 환경. 상세 컨텍스트는 docs/HANDOFF.md, 기획은 docs/PROJECT_PLAN.md 참조.
+
+## 파이프라인 흐름
+
+이미지 → 전처리(deskew) → OCR(PaddleOCR 주력/Tesseract 대체, bbox+텍스트)
+→ (--vlm-correct) 로컬 VLM 이 OCR 오독 교정 → 룰 탐지(정규식+체크섬)
+→ (--use-llm) LLM 이 문맥 엔티티(이름/주소) 보강 → 합성값 생성(포맷 보존)
+→ 치환 렌더링 → 치환 이미지 + labels.json
+
+## 절대 규칙
+
+1. **재현율 최우선**: 미탐 = 개인정보 유출. 애매하면 탐지해서 치환. 오탐은
+   confidence 낮춰 허용. confidence 는 탐지 여부가 아닌 검수 우선순위용.
+2. **라벨/로그에 원본 PII 값 저장 금지.** test_labels_do_not_contain_original_pii
+   가 강제함. 깨뜨리지 말 것.
+3. **테스트·데모에 실존 개인정보 금지.** src/grape_pii/synth/generators.py 의
+   합성값만 사용.
+4. **외부 API 호출 코드 추가 금지** (폐쇄망). LLM/VLM 은 환경변수 기반 OpenAI
+   호환 클라이언트(src/grape_pii/detect/llm.py 의 LLMClient)만 사용.
+   - 엔티티 탐지 LLM: GRAPE_LLM_BASE_URL / GRAPE_LLM_MODEL (내부 GPT-5.4)
+   - OCR 교정 VLM: GRAPE_VLM_BASE_URL / GRAPE_VLM_MODEL (로컬 gemma4-31b-4bit)
+5. 수정 후 `python -m pytest -q` 전부 통과 확인 (현재 57 passed).
+   OCR 오독 대응 룰(tests/test_rules.py)은 실측 기반 회귀 테스트 — 지울 것.
+
+## 주요 명령
+
+- 테스트: `python -m pytest -q` (임시폴더 권한 오류 시 `--basetemp .pytest-tmp`)
+- 실행: `python -m grape_pii.pipeline image doc.jpg out.png labels.json
+  [--ocr-engine paddle|tesseract] [--vlm-correct] [--use-llm] [--seed N]`
+- 탐지 문제 진단: `--dump-tokens tokens.json` 으로 OCR 실출력부터 확인
+- 가짜 테스트 문서 생성: `python scripts/make_family_cert.py out.png --seed N`
+
+## 모듈 맵
+
+- detect/rules.py: 룰 탐지 전부 + 전각→반각 정규화(detect_all 입구)
+- detect/llm.py: LLMClient(비전 입력 지원) + LLM 엔티티 탐지
+- synth/generators.py: 합성값 생성 (체크섬 유효, 하이픈/마스크 위치 보존, seed 재현)
+- ocr/engine.py: PaddleOCR(2.x/3.x 자동판별, Windows oneDNN 버그 자동 폴백), Tesseract
+- ocr/vlm.py: VlmReader — OCR bbox 유지, 텍스트만 VLM 교정 (문서당 1회 호출)
+- render/: 배경색 추정 + bbox 높이 기반 폰트 역산 렌더링, OS 별 한글 폰트 자동 탐색
+- pipeline.py: CLI (text/image 서브커맨드)
+- configs/prompts/: LLM/VLM 프롬프트 (모델 반응 보고 튜닝)
+
+## 현재 우선 작업 (docs/HANDOFF.md §8 상세)
+
+1. GPT-5.4 로 LLM 엔티티 탐지 라이브 검증 (scripts/demo_llm_detect.py)
+2. 로컬 Gemma 로 VLM 교정 라이브 검증 (--vlm-correct + --dump-tokens)
+3. 재현율 측정 도구 → 2차 스크리닝 게이트 → 엔티티 일관성(생일-주민번호 연동)
