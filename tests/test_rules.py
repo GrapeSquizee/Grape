@@ -2,8 +2,8 @@
 import random
 
 from grape_pii.detect.rules import (
-    detect_account, detect_all, detect_card, detect_date, detect_email,
-    detect_name, detect_phone, detect_rrn, luhn_ok, rrn_checksum,
+    detect_account, detect_address, detect_all, detect_card, detect_date,
+    detect_email, detect_name, detect_phone, detect_rrn, luhn_ok, rrn_checksum,
 )
 from grape_pii.synth.generators import make_card_digits, make_rrn_digits
 
@@ -38,6 +38,21 @@ def test_detect_rrn_masked_tail():
         found = detect_rrn(text)
         assert len(found) == 1, text
         assert found[0].confidence == 0.9
+
+
+def test_detect_rrn_masked_ocr_variants():
+    # OCR 이 * 개수를 다르게 읽거나(5/7개) 공백을 끼워 읽는 경우
+    for text in ("680202-2*****", "650101-1*******", "750123-1 ******"):
+        assert len(detect_rrn(text)) == 1, text
+
+
+def test_detect_address_rule():
+    found = detect_address("등록기준지 서울특별시 영등포구 여의도동 1번지의 1234")
+    assert len(found) == 1
+    assert found[0].text.startswith("서울특별시")
+    assert "1번지의 1234" in found[0].text
+    assert detect_address("경기도 수원시 팔달구 정조로 825") != []
+    assert detect_address("주소 없는 문장입니다") == []
 
 
 def test_masked_rrn_invalid_date_rejected():
@@ -107,9 +122,24 @@ def test_detect_name_hanja():
     assert found[0].text == "김본인(金本人)"
 
 
+def test_detect_name_hanja_with_space_and_garbled():
+    # OCR 이 이름과 괄호를 띄어 읽거나 한자를 일부 오독해도 잡혀야 함
+    assert len(detect_name("부 김영철 (金晄쒜) 1954년")) == 1
+    assert len(detect_name("모 이은미(李恩美) 1942년")) == 1
+
+
+def test_document_title_not_a_name():
+    # "증명서(일반)" 같은 문서 제목 꼬리가 이름으로 오탐되면 안 됨
+    assert detect_name("가족관계증명서(일반)") == []
+    assert detect_name("위 가족관계증명서(일반)는 기록사항과 틀림없음") == []
+    assert detect_name("가 족 관 계 증 명 서 (일반)") == []
+
+
 def test_detect_name_keyword():
     found = detect_name("신청인: 홍길동 (서명)")
     assert [f.text for f in found] == ["홍길동"]
+    assert [f.text for f in detect_name("전산운영책임관 홍길동")] == ["홍길동"]
+    assert [f.text for f in detect_name("신청인 : 김본인")] == ["김본인"]
 
 
 def test_detect_name_stopwords_excluded():

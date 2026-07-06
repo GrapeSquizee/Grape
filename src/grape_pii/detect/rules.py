@@ -19,7 +19,8 @@ _CONFIG_DIR = Path(__file__).resolve().parents[3] / "configs"
 # 증명서 견본류는 뒷자리가 마스킹된 형태(650101-1******)로 나오므로 함께 탐지한다.
 # OCR 이 * 를 ●·× 등으로 오독하는 경우까지 마스크 문자로 허용한다.
 _RRN_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9]\d{6})(?![\d-])")
-_RRN_MASKED_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9])([*●○•xX×＊]{6})")
+# 마스크 문자 개수는 OCR 이 6개를 5~7개로 오독하는 경우가 흔해 3~10개 허용
+_RRN_MASKED_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9]) ?([*●○•xX×＊★☆]{3,10})")
 _RRN_WEIGHTS = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
 _GENDER_CENTURY = {"1": 1900, "2": 1900, "3": 2000, "4": 2000,
                    "5": 1900, "6": 1900, "7": 2000, "8": 2000,
@@ -169,24 +170,51 @@ def detect_date(text: str) -> list[Detection]:
     return out
 
 
+# ── 주소 (룰 보조) ───────────────────────────────────────────
+# 한국 주소는 시/도명으로 시작하는 정형성이 있어 룰로 1차 탐지한다.
+# 상세주소(동/호 등) 꼬리는 놓칠 수 있으므로 LLM 탐지가 보완한다.
+_ADDRESS_RE = re.compile(
+    r"(서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|"
+    r"세종특별자치시|경기도|강원특별자치도|강원도|충청북도|충청남도|전북특별자치도|"
+    r"전라북도|전라남도|경상북도|경상남도|제주특별자치도|제주도|"
+    r"서울시|부산시|대구시|인천시|광주시|대전시|울산시)"
+    r"[ ]?[가-힣\d\s\-·.]{2,60}?"
+    r"\d+(?:-\d+)?(?:번지)?(?:의 ?\d+)?(?:호|층|동)?"
+)
+
+
+def detect_address(text: str) -> list[Detection]:
+    return [
+        Detection("ADDRESS", m.group(0), m.start(), m.end(), 0.7)
+        for m in _ADDRESS_RE.finditer(text)
+    ]
+
+
 # ── 이름 (룰 보조) ───────────────────────────────────────────
 # 문맥 전체를 보는 이름 탐지는 LLM 담당이지만, 형태만으로 확실한 두 경우는
 # 룰로 잡는다: ① 한자 병기 이름 "김본인(金本人)" ② 성명/신청인 등 라벨 뒤 이름.
-_NAME_HANJA_RE = re.compile(r"[가-힣]{2,4}\([^)\s]{1,8}\)")
+# 오탐 방지 제약:
+# - 앞이 한글이면 제외 — "가족관계증명서(일반)" 의 "증명서(일반)" 같은 단어 꼬리 매치 방지
+# - 괄호 안에 한자가 1자 이상 있어야 함 — "(일반)", "(서명)" 같은 한글 괄호 제외.
+#   OCR 이 한자를 일부 한글로 오독해도(金晄쒜) 한자가 하나라도 남으면 잡힌다.
+# - 이름과 괄호 사이 공백 허용 — OCR 토큰 분리 대응
+_HANJA_RE = re.compile(r"[一-鿿㐀-䶿豈-﫿]")
+_NAME_HANJA_RE = re.compile(r"(?<![가-힣])([가-힣]{2,4}) ?\(([^)]{1,10})\)")
 _NAME_KEYWORD_RE = re.compile(
-    r"(성\s*명|이\s*름|신\s*청\s*인|예\s*금\s*주|세\s*대\s*주|보\s*호\s*자|수\s*취\s*인)"
+    r"(성\s*명|이\s*름|신\s*청\s*인|예\s*금\s*주|세\s*대\s*주|보\s*호\s*자|"
+    r"수\s*취\s*인|책\s*임\s*관|담\s*당\s*자|설\s*계\s*사|발\s*급\s*인)"
     r"\s*[:：]?\s*([가-힣]{2,4})(?![가-힣])"
 )
 _NAME_STOPWORDS = {
     "본인", "성명", "이름", "신청인", "예금주", "세대주", "보호자", "수취인",
-    "대리인", "담당자", "배우자", "자녀", "서명", "날인", "확인",
+    "대리인", "담당자", "배우자", "자녀", "서명", "날인", "확인", "책임관",
 }
 
 
 def detect_name(text: str) -> list[Detection]:
     out = []
     for m in _NAME_HANJA_RE.finditer(text):
-        if m.group(0).split("(")[0] in _NAME_STOPWORDS:
+        if m.group(1) in _NAME_STOPWORDS or not _HANJA_RE.search(m.group(2)):
             continue
         out.append(Detection("NAME", m.group(0), m.start(), m.end(), 0.8))
     for m in _NAME_KEYWORD_RE.finditer(text):
@@ -212,7 +240,7 @@ def detect_email(text: str) -> list[Detection]:
 # ── 통합 ────────────────────────────────────────────────────
 # 우선순위: 겹치는 스팬은 먼저 탐지된(더 특이적인) 타입이 이긴다.
 _DETECTORS = (detect_rrn, detect_card, detect_phone, detect_email,
-              detect_account, detect_date, detect_name)
+              detect_account, detect_address, detect_date, detect_name)
 
 
 def detect_all(text: str) -> list[Detection]:
