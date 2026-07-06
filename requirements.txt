@@ -1,0 +1,22 @@
+# 폐쇄망 반입용 전체 의존성.
+# 외부망에서: pip download -r requirements.txt -d wheels/ --platform manylinux2014_x86_64 --python-version 311 --only-binary=:all:
+# 폐쇄망에서: pip install --no-index --find-links wheels/ -r requirements.txt
+# 추가 반입: PaddleOCR 한국어 det/rec/cls 모델 파일, 한글 폰트(나눔고딕 등)
+
+# 코어 (탐지·합성) — 순수 파이썬, faker 없이도 내장 목록으로 동작
+faker
+
+# 이미지 처리 (전처리·렌더링)
+pillow
+opencv-python-headless
+numpy
+
+# OCR
+paddleocr
+paddlepaddle
+
+# 개발·테스트
+pytest
+
+# QA 검수 (별도 서버에 설치 권장)
+# label-studio

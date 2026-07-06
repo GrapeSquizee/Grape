@@ -1,0 +1,168 @@
+"""룰 기반 PII 탐지 — 정규식 + 체크섬/유효성 검증.
+
+숫자형 PII(주민번호, 카드번호, 계좌번호, 전화번호)는 룰이 LLM보다 정확하고 싸다.
+정책: 재현율 최우선 — 형태가 맞으면 일단 탐지하고, 체크섬 통과 여부는
+confidence 로만 반영한다 (미탐 = 개인정보 유출).
+"""
+import calendar
+import json
+import re
+from pathlib import Path
+
+from .models import Detection
+
+_CONFIG_DIR = Path(__file__).resolve().parents[3] / "configs"
+
+# ── 주민등록번호 ──────────────────────────────────────────────
+# 2020.10 이후 발급분은 뒷자리가 무작위라 체크섬이 성립하지 않으므로,
+# 체크섬은 탐지 여부가 아니라 confidence 에만 반영한다.
+_RRN_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9]\d{6})(?![\d-])")
+_RRN_WEIGHTS = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
+_GENDER_CENTURY = {"1": 1900, "2": 1900, "3": 2000, "4": 2000,
+                   "5": 1900, "6": 1900, "7": 2000, "8": 2000,
+                   "9": 1800, "0": 1800}
+
+
+def rrn_checksum(digits12: str) -> int:
+    s = sum(int(d) * w for d, w in zip(digits12, _RRN_WEIGHTS))
+    return (11 - s % 11) % 10
+
+
+def _valid_rrn_date(front6: str, gender: str) -> bool:
+    century = _GENDER_CENTURY.get(gender)
+    if century is None:
+        return False
+    year = century + int(front6[:2])
+    month, day = int(front6[2:4]), int(front6[4:6])
+    if not 1 <= month <= 12:
+        return False
+    return 1 <= day <= calendar.monthrange(year, month)[1]
+
+
+def detect_rrn(text: str) -> list[Detection]:
+    out = []
+    for m in _RRN_RE.finditer(text):
+        front, back = m.group(1), m.group(2)
+        if not _valid_rrn_date(front, back[0]):
+            continue
+        digits = front + back
+        conf = 1.0 if rrn_checksum(digits[:12]) == int(digits[12]) else 0.8
+        out.append(Detection("RRN", m.group(0), m.start(), m.end(), conf))
+    return out
+
+
+# ── 카드번호 ─────────────────────────────────────────────────
+# 13~19자리, 국내 카드 BIN 은 3/4/5/6/9 로 시작. 4-4-4-4 등 구분자가 있으면
+# Luhn 실패여도 탐지(저해상도 OCR 오독 가능성), 구분자 없는 연속 숫자는
+# Luhn 통과를 요구해 오탐을 줄인다.
+_CARD_RE = re.compile(r"(?<![\d-])([3-69]\d{3}([- ]?)\d{4}\2\d{4}\2\d{1,4}|[3-69]\d{12,18})(?![\d-])")
+
+
+def luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def detect_card(text: str) -> list[Detection]:
+    out = []
+    for m in _CARD_RE.finditer(text):
+        raw = m.group(0)
+        digits = re.sub(r"\D", "", raw)
+        if not 13 <= len(digits) <= 19:
+            continue
+        grouped = bool(re.search(r"[- ]", raw))
+        if luhn_ok(digits):
+            conf = 1.0
+        elif grouped:
+            conf = 0.7
+        else:
+            continue  # 구분자 없는 Luhn 실패 숫자열은 카드로 보지 않음
+        out.append(Detection("CARD", raw, m.start(), m.end(), conf))
+    return out
+
+
+# ── 계좌번호 ─────────────────────────────────────────────────
+# 은행별 자릿수 패턴은 configs/bank_patterns.json 에서 로드.
+# 패턴 일치 + 주변 문맥 키워드(계좌/은행명)가 있으면 confidence 를 올린다.
+_ACCOUNT_CONTEXT_RE = re.compile(
+    r"계좌|입금|출금|송금|은행|뱅크|농협|국민|신한|우리|하나|기업|수협|새마을|카카오|케이뱅크|토스"
+)
+_CONTEXT_WINDOW = 30
+
+
+def _load_bank_patterns() -> list[dict]:
+    path = _CONFIG_DIR / "bank_patterns.json"
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)["patterns"]
+
+
+_BANK_PATTERNS = None
+
+
+def _bank_patterns() -> list[dict]:
+    global _BANK_PATTERNS
+    if _BANK_PATTERNS is None:
+        _BANK_PATTERNS = [
+            {"bank": p["bank"], "re": re.compile(p["regex"])}
+            for p in _load_bank_patterns()
+        ]
+    return _BANK_PATTERNS
+
+
+def detect_account(text: str) -> list[Detection]:
+    # 은행별 패턴과 generic 패턴이 같은 스팬에 중복 매치될 수 있으므로,
+    # 설정 파일 순서(특이적 패턴 우선)대로 겹치는 스팬은 최초 매치만 남긴다.
+    out: list[Detection] = []
+    for p in _bank_patterns():
+        for m in p["re"].finditer(text):
+            ctx = text[max(0, m.start() - _CONTEXT_WINDOW): m.end() + _CONTEXT_WINDOW]
+            conf = 0.9 if _ACCOUNT_CONTEXT_RE.search(ctx) else 0.6
+            d = Detection("ACCOUNT", m.group(0), m.start(), m.end(), conf)
+            if not any(d.overlaps(existing) for existing in out):
+                out.append(d)
+    return out
+
+
+# ── 전화번호 ─────────────────────────────────────────────────
+_PHONE_RE = re.compile(
+    r"(?<![\d-])(01[016789][- ]?\d{3,4}[- ]?\d{4}|0(2|[3-6]\d)[- ]?\d{3,4}[- ]?\d{4})(?![\d-])"
+)
+
+
+def detect_phone(text: str) -> list[Detection]:
+    return [
+        Detection("PHONE", m.group(0), m.start(), m.end(), 0.95)
+        for m in _PHONE_RE.finditer(text)
+    ]
+
+
+# ── 이메일 ──────────────────────────────────────────────────
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def detect_email(text: str) -> list[Detection]:
+    return [
+        Detection("EMAIL", m.group(0), m.start(), m.end(), 0.95)
+        for m in _EMAIL_RE.finditer(text)
+    ]
+
+
+# ── 통합 ────────────────────────────────────────────────────
+# 우선순위: 겹치는 스팬은 먼저 탐지된(더 특이적인) 타입이 이긴다.
+_DETECTORS = (detect_rrn, detect_card, detect_phone, detect_email, detect_account)
+
+
+def detect_all(text: str) -> list[Detection]:
+    accepted: list[Detection] = []
+    for detector in _DETECTORS:
+        for d in detector(text):
+            if not any(d.overlaps(a) for a in accepted):
+                accepted.append(d)
+    return sorted(accepted, key=lambda d: d.start)

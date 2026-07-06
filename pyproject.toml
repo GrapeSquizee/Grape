@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grape-pii"
+version = "0.1.0"
+description = "문서 이미지 개인정보(PII) 탐지·합성 치환 파이프라인"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+synth = ["faker"]
+image = ["pillow", "opencv-python-headless", "numpy"]
+ocr = ["paddleocr", "paddlepaddle"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
