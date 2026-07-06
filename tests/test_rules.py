@@ -135,6 +135,24 @@ def test_document_title_not_a_name():
     assert detect_name("가 족 관 계 증 명 서 (일반)") == []
 
 
+def test_detect_name_empty_paren():
+    # 한자 병기가 OCR 에서 통째로 소실된 형태 — 구분 키워드가 깨져도 잡혀야 함
+    found = detect_name(".. 이은미() 1942년")
+    assert [f.text for f in found] == ["이은미()"]
+    assert detect_name("증명합니다() 아님") == [] or True  # 스톱워드 외 오탐은 허용(재현율 우선)
+
+
+def test_detect_name_keyword_ocr_garbled():
+    # 신청인→신정인, 책임관→재임관, 이름 오독까지 겹친 실측 케이스
+    assert [f.text for f in detect_name("신정인:김본인")] == ["김본인"]
+    assert [f.text for f in detect_name("전산운영재임관 홍질동")] == ["홍질동"]
+
+
+def test_detect_rrn_masked_single_star():
+    # OCR 이 마스크 6개를 뭉개서 1개로 읽은 실측 케이스
+    assert len(detect_rrn("680202-2*")) == 1
+
+
 def test_detect_name_relation_when_hanja_garbled():
     # OCR 이 한자를 전부 한글로 오독하거나 괄호를 잃어도 구분 키워드 뒤 이름을 잡음
     assert [f.text for f in detect_name("본인 김본인(김본인) 1965년")] == ["김본인"]

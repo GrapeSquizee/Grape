@@ -31,8 +31,9 @@ def normalize_text(text: str) -> str:
 # 증명서 견본류는 뒷자리가 마스킹된 형태(650101-1******)로 나오므로 함께 탐지한다.
 # OCR 이 * 를 ●·× 등으로 오독하는 경우까지 마스크 문자로 허용한다.
 _RRN_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9]\d{6})(?![\d-])")
-# 마스크 문자 개수는 OCR 이 6개를 5~7개로 오독하는 경우가 흔해 3~10개 허용
-_RRN_MASKED_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9]) ?([*●○•xX×＊★☆]{3,10})")
+# 마스크 문자 개수는 OCR 이 6개를 1개(뭉개짐)~10개로 오독하는 경우까지 허용.
+# 유효한 생년월일 6자리 + 구분자 + 성별자리 제약이 있어 오탐 위험은 낮다.
+_RRN_MASKED_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9]) ?([*●○•xX×＊★☆]{1,10})")
 _RRN_WEIGHTS = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
 _GENDER_CENTURY = {"1": 1900, "2": 1900, "3": 2000, "4": 2000,
                    "5": 1900, "6": 1900, "7": 2000, "8": 2000,
@@ -212,11 +213,15 @@ def detect_address(text: str) -> list[Detection]:
 # - 이름과 괄호 사이 공백 허용 — OCR 토큰 분리 대응
 _HANJA_RE = re.compile(r"[一-鿿㐀-䶿豈-﫿]")
 _NAME_HANJA_RE = re.compile(r"(?<![가-힣])([가-힣]{2,4}) ?\(([^)]{1,10})\)")
+# 키워드의 일부 글자는 OCR 오독 변형을 허용한다 (신청인→신정인, 책임관→재임관)
 _NAME_KEYWORD_RE = re.compile(
-    r"(성\s*명|이\s*름|신\s*청\s*인|예\s*금\s*주|세\s*대\s*주|보\s*호\s*자|"
-    r"수\s*취\s*인|책\s*임\s*관|담\s*당\s*자|설\s*계\s*사|발\s*급\s*인)"
+    r"(성\s*명|이\s*름|신\s*[청정]\s*인|예\s*금\s*주|세\s*대\s*주|보\s*호\s*자|"
+    r"수\s*취\s*인|[책재]\s*임\s*관|담\s*당\s*자|설\s*계\s*사|발\s*급\s*인)"
     r"\s*[:：]?\s*([가-힣]{2,4})(?![가-힣])"
 )
+# 빈 괄호가 붙은 한글 2~4자 "이은미()" — 한자 병기가 OCR 에서 통째로 소실된
+# 형태. 일반 단어에 빈 괄호가 붙는 일은 드물어 이름으로 간주한다.
+_NAME_EMPTY_PAREN_RE = re.compile(r"(?<![가-힣])([가-힣]{2,4}) ?\(\s*\)")
 # 가족관계 구분(본인/부/모/배우자/자녀) 뒤 이름 — OCR 이 한자를 전부 한글로
 # 오독하거나 괄호를 잃어도 잡는 최후 보루. 이름 뒤에 괄호나 숫자(생년월일)가
 # 이어지는 경우만 인정해 오탐을 줄인다.
@@ -235,6 +240,12 @@ def detect_name(text: str) -> list[Detection]:
         if m.group(1) in _NAME_STOPWORDS or not _HANJA_RE.search(m.group(2)):
             continue
         out.append(Detection("NAME", m.group(0), m.start(), m.end(), 0.8))
+    for m in _NAME_EMPTY_PAREN_RE.finditer(text):
+        if m.group(1) in _NAME_STOPWORDS:
+            continue
+        d = Detection("NAME", m.group(0), m.start(), m.end(), 0.7)
+        if not any(d.overlaps(prev) for prev in out):
+            out.append(d)
     matches = ([(m, 0.6) for m in _NAME_KEYWORD_RE.finditer(text)]
                + [(m, 0.7) for m in _NAME_RELATION_RE.finditer(text)])
     for m, conf in matches:
