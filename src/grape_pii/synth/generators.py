@@ -41,13 +41,22 @@ def preserve_format(original: str, new_digits: str) -> str:
     return "".join(next(it) if ch.isdigit() else ch for ch in original)
 
 
-def make_rrn_digits(rng: random.Random | None = None) -> str:
-    """체크섬 유효한 주민등록번호 13자리 생성."""
+def make_rrn_digits(rng: random.Random | None = None,
+                    year_range: tuple[int, int] = (1950, 2005),
+                    sex: str | None = None) -> str:
+    """체크섬 유효한 주민등록번호 13자리 생성.
+
+    sex: "M"/"F" 지정 시 성별 자리를 맞춘다 (문서 서식 생성용). None 이면 무작위.
+    """
     r = _rng(rng)
-    year = r.randint(1950, 2005)
+    year = r.randint(*year_range)
     month = r.randint(1, 12)
     day = r.randint(1, 28)
-    gender = r.choice("12") if year < 2000 else r.choice("34")
+    males, females = ("1", "3"), ("2", "4")
+    pool = males if sex == "M" else females if sex == "F" else males + females
+    gender = pool[0] if year < 2000 else pool[-1]
+    if sex is None:
+        gender = r.choice([g for g in pool if (year < 2000) == (g in "12")])
     front12 = f"{year % 100:02d}{month:02d}{day:02d}{gender}{r.randint(0, 99999):05d}"
     return front12 + str(rrn_checksum(front12))
 
