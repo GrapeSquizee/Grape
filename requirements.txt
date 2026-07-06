@@ -1,7 +1,6 @@
-# 폐쇄망 반입용 전체 의존성.
-# 외부망에서: pip download -r requirements.txt -d wheels/ --platform manylinux2014_x86_64 --python-version 311 --only-binary=:all:
-# 폐쇄망에서: pip install --no-index --find-links wheels/ -r requirements.txt
-# 추가 반입: PaddleOCR 한국어 det/rec/cls 모델 파일, 한글 폰트(나눔고딕 등)
+# 전체 의존성 — 폐쇄망에서는 내부 Nexus(PyPI 미러)로 설치.
+# 패키지 외 추가 반입: PaddleOCR 모델(~/.paddlex/official_models), 한글 폰트.
+# 대체 OCR 엔진 사용 시 OS 패키지: tesseract-ocr, tesseract-ocr-kor
 
 # 코어 (탐지·합성) — 순수 파이썬, faker 없이도 내장 목록으로 동작
 faker
@@ -11,9 +10,10 @@ pillow
 opencv-python-headless
 numpy
 
-# OCR
+# OCR (주력: PaddleOCR / 대체: pytesseract + OS tesseract)
 paddleocr
 paddlepaddle
+pytesseract
 
 # 개발·테스트
 pytest

@@ -93,15 +93,15 @@ def _entity_bbox(ent: dict, tokens: list[dict]) -> list[float] | None:
 def run_image(image_path: str | Path, output_image: str | Path,
               output_labels: str | Path, font_path: str,
               llm: LLMClient | None = None, seed: int | None = None,
-              ocr=None) -> dict:
+              ocr=None, ocr_engine: str = "paddle") -> dict:
     """이미지 → 전처리 → OCR → 탐지 → 치환 렌더링 → 라벨.
 
-    ocr: OcrEngine 인스턴스 (재사용을 위해 주입 가능, 없으면 생성).
+    ocr: 엔진 인스턴스 (재사용을 위해 주입 가능, 없으면 ocr_engine 이름으로 생성).
     """
     import cv2
     from PIL import Image
 
-    from .ocr.engine import OcrEngine
+    from .ocr.engine import create_engine
     from .preprocess.geometry import deskew
     from .render.redact import replace_text_region
 
@@ -111,7 +111,7 @@ def run_image(image_path: str | Path, output_image: str | Path,
     image, skew_angle = deskew(image)
 
     if ocr is None:
-        ocr = OcrEngine()
+        ocr = create_engine(ocr_engine)
     tokens = ocr.read(image)
 
     result = run_text(tokens, llm=llm, seed=seed)
@@ -146,6 +146,7 @@ def main() -> None:
     p_img.add_argument("output_image", help="치환 완료 이미지 경로")
     p_img.add_argument("output_labels", help="라벨 출력 JSON 경로")
     p_img.add_argument("--font", default="/usr/share/fonts/truetype/nanum/NanumGothic.ttf")
+    p_img.add_argument("--ocr-engine", choices=("paddle", "tesseract"), default="paddle")
 
     for p in (p_text, p_img):
         p.add_argument("--use-llm", action="store_true",
@@ -160,7 +161,8 @@ def main() -> None:
         print(f"entities: {len(result['entities'])} → {args.output}")
     else:
         result = run_image(args.image, args.output_image, args.output_labels,
-                           font_path=args.font, llm=llm, seed=args.seed)
+                           font_path=args.font, llm=llm, seed=args.seed,
+                           ocr_engine=args.ocr_engine)
         print(f"entities: {len(result['entities'])} → {args.output_image}, {args.output_labels}")
 
 

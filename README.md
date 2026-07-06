@@ -13,10 +13,12 @@
 | 룰 탐지 (주민번호/카드/계좌/전화/이메일, 체크섬 검증) | ✅ 동작 + 테스트 |
 | 합성값 생성 (체크섬 유효, 포맷 보존) | ✅ 동작 + 테스트 |
 | 파이프라인 text 모드 (OCR JSON → 라벨 JSON) | ✅ 동작 + 테스트 |
-| LLM 탐지 (GPT-5.4, 이름/주소) | 🔌 구현됨 — 내부 엔드포인트 연결 필요 |
-| 전처리 (방향 보정 + deskew) | 🔌 구현됨 — OpenCV 반입 후 검증 |
-| OCR (PaddleOCR 한국어) | 🔌 래퍼만 — 모델 반입 후 검증 |
-| 치환 렌더링 (인페인팅 + 텍스트) | 🔌 구현됨 — 폰트 반입 후 검증 |
+| 파이프라인 image 모드 (이미지 → 치환 이미지 + 라벨) | ✅ Tesseract 로 E2E 검증 완료 |
+| 치환 렌더링 (배경 추정 + 텍스트) | ✅ 샘플 문서로 육안 검증 완료 |
+| 전처리 (deskew) | ✅ image 모드에 연결됨 (방향 보정은 OCR 신뢰도 휴리스틱) |
+| OCR — Tesseract(kor) 대체 엔진 | ✅ 동작 (OS 패키지만 필요) |
+| OCR — PaddleOCR 한국어 (주력) | 🔌 래퍼 완성(2.x/3.x 겸용) — 모델 다운로드 가능 환경에서 검증 |
+| LLM 탐지 (이름/주소) | 🔌 목 서버 테스트 통과 — 라이브는 NVIDIA NIM 또는 내부 GPT-5.4 로 |
 
 ## 빠른 시작
 
@@ -26,23 +28,36 @@ python -m pytest               # 단위테스트
 python scripts/demo_text_mode.py   # 탐지→치환 E2E 데모 (가짜 PII 사용)
 ```
 
-파이프라인 실행 (text 모드):
+파이프라인 실행:
 
 ```bash
-python -m grape_pii.pipeline ocr_result.json labels.json --seed 42
-# LLM 탐지 포함: GRAPE_LLM_BASE_URL=http://<내부엔드포인트>/v1 붙여서 --use-llm
+# text 모드: OCR JSON → 라벨 JSON
+python -m grape_pii.pipeline text ocr_result.json labels.json --seed 42
+
+# image 모드: 이미지 → 치환 이미지 + 라벨 JSON
+python -m grape_pii.pipeline image doc.png redacted.png labels.json \
+    --ocr-engine tesseract   # PaddleOCR 모델 없는 환경. 기본값은 paddle
+
+# LLM 탐지 포함: GRAPE_LLM_BASE_URL=http://<엔드포인트>/v1 설정 후 --use-llm
 ```
 
-## 폐쇄망 반입
+LLM 라이브 테스트 (OpenAI 호환 — 외부는 NVIDIA NIM, 내부는 GPT-5.4):
 
 ```bash
-# 외부망에서 수집
-pip download -r requirements.txt -d wheels/
-# 폐쇄망에서 설치
-pip install --no-index --find-links wheels/ -r requirements.txt
+export GRAPE_LLM_BASE_URL=https://integrate.api.nvidia.com/v1  # 내부: http://<내부엔드포인트>/v1
+export GRAPE_LLM_API_KEY=nvapi-...
+export GRAPE_LLM_MODEL=meta/llama-3.3-70b-instruct             # 내부: gpt-5.4
+python scripts/demo_llm_detect.py
 ```
 
-추가 반입 목록: PaddleOCR 한국어 det/rec 모델 + 방향 분류 모델, 한글 폰트(나눔고딕 등).
+## 폐쇄망 설치
+
+내부 Nexus(PyPI 미러)에서 `pip install -r requirements.txt`.
+패키지 외 추가 반입 목록:
+- PaddleOCR 한국어 det/rec 모델 + 방향 분류 모델 (최초 실행 시 자동 다운로드
+  경로 `~/.paddlex/official_models` 를 통째로 복사하면 됨)
+- 한글 폰트 (나눔고딕 등) — 렌더링용
+- (대체 엔진 사용 시) OS 패키지 `tesseract-ocr`, `tesseract-ocr-kor`
 
 ## 구조
 
