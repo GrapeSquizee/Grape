@@ -3,7 +3,8 @@
 두 가지 모드:
 - text 모드: OCR 결과 JSON([{"text": ..., "bbox": [...]}, ...])을 입력으로
   탐지→합성값 생성까지 수행. OCR/렌더링 없이 탐지 로직을 검증하는 PoC 용.
-- image 모드(추후): 전처리→OCR→탐지→렌더링까지 전체 수행. PaddleOCR 반입 후 연결.
+- image 모드: 전처리(deskew)→OCR→탐지→치환 렌더링→라벨까지 전체 수행.
+  PaddleOCR/OpenCV/Pillow 필요 (반입 목록 참조).
 
 출력 라벨에는 원본 텍스트를 포함하지 않는다 — 원본값↔치환값 매핑은 그 자체가
 개인정보이므로 기본 정책은 미저장 (계획서 6장).
@@ -80,20 +81,87 @@ def run_file(ocr_json_path: str | Path, output_path: str | Path,
     return result
 
 
+def _entity_bbox(ent: dict, tokens: list[dict]) -> list[float] | None:
+    """엔티티에 속한 토큰 bbox 들의 합집합 사각형."""
+    boxes = [tokens[i]["bbox"] for i in ent["token_ids"] if tokens[i].get("bbox")]
+    if not boxes:
+        return None
+    return [min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes)]
+
+
+def run_image(image_path: str | Path, output_image: str | Path,
+              output_labels: str | Path, font_path: str,
+              llm: LLMClient | None = None, seed: int | None = None,
+              ocr=None) -> dict:
+    """이미지 → 전처리 → OCR → 탐지 → 치환 렌더링 → 라벨.
+
+    ocr: OcrEngine 인스턴스 (재사용을 위해 주입 가능, 없으면 생성).
+    """
+    import cv2
+    from PIL import Image
+
+    from .ocr.engine import OcrEngine
+    from .preprocess.geometry import deskew
+    from .render.redact import replace_text_region
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        raise FileNotFoundError(image_path)
+    image, skew_angle = deskew(image)
+
+    if ocr is None:
+        ocr = OcrEngine()
+    tokens = ocr.read(image)
+
+    result = run_text(tokens, llm=llm, seed=seed)
+
+    pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    for ent in result["entities"]:
+        bbox = _entity_bbox(ent, tokens)
+        ent["bbox"] = bbox
+        if bbox is not None:
+            pil_image = replace_text_region(pil_image, bbox, ent["replacement"], font_path)
+    pil_image.save(output_image)
+
+    result["meta"] = {"skew_angle": skew_angle, "n_tokens": len(tokens),
+                      "source_image": str(Path(image_path).name)}
+    with open(output_labels, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    return result
+
+
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="PII 탐지·치환 파이프라인 (text 모드)")
-    parser.add_argument("ocr_json", help="OCR 결과 JSON ({\"tokens\": [{\"text\", \"bbox\"}]})")
-    parser.add_argument("output", help="라벨 출력 JSON 경로")
-    parser.add_argument("--use-llm", action="store_true",
-                        help="GRAPE_LLM_BASE_URL 로 LLM 탐지 활성화")
-    parser.add_argument("--seed", type=int, default=None)
-    args = parser.parse_args()
+    parser = argparse.ArgumentParser(description="PII 탐지·치환 파이프라인")
+    sub = parser.add_subparsers(dest="mode", required=True)
 
+    p_text = sub.add_parser("text", help="OCR JSON → 라벨 JSON")
+    p_text.add_argument("ocr_json", help="OCR 결과 JSON ({\"tokens\": [{\"text\", \"bbox\"}]})")
+    p_text.add_argument("output", help="라벨 출력 JSON 경로")
+
+    p_img = sub.add_parser("image", help="이미지 → 치환 이미지 + 라벨 JSON")
+    p_img.add_argument("image", help="입력 문서 이미지")
+    p_img.add_argument("output_image", help="치환 완료 이미지 경로")
+    p_img.add_argument("output_labels", help="라벨 출력 JSON 경로")
+    p_img.add_argument("--font", default="/usr/share/fonts/truetype/nanum/NanumGothic.ttf")
+
+    for p in (p_text, p_img):
+        p.add_argument("--use-llm", action="store_true",
+                       help="GRAPE_LLM_BASE_URL 로 LLM 탐지 활성화")
+        p.add_argument("--seed", type=int, default=None)
+
+    args = parser.parse_args()
     llm = LLMClient() if args.use_llm else None
-    result = run_file(args.ocr_json, args.output, llm=llm, seed=args.seed)
-    print(f"entities: {len(result['entities'])} → {args.output}")
+
+    if args.mode == "text":
+        result = run_file(args.ocr_json, args.output, llm=llm, seed=args.seed)
+        print(f"entities: {len(result['entities'])} → {args.output}")
+    else:
+        result = run_image(args.image, args.output_image, args.output_labels,
+                           font_path=args.font, llm=llm, seed=args.seed)
+        print(f"entities: {len(result['entities'])} → {args.output_image}, {args.output_labels}")
 
 
 if __name__ == "__main__":
