@@ -135,6 +135,21 @@ def test_document_title_not_a_name():
     assert detect_name("가 족 관 계 증 명 서 (일반)") == []
 
 
+def test_detect_name_relation_when_hanja_garbled():
+    # OCR 이 한자를 전부 한글로 오독하거나 괄호를 잃어도 구분 키워드 뒤 이름을 잡음
+    assert [f.text for f in detect_name("본인 김본인(김본인) 1965년")] == ["김본인"]
+    assert [f.text for f in detect_name("부 김영철 1972년 12월 11일")] == ["김영철"]
+    assert [f.text for f in detect_name("배우자 박여인 1970년")] == ["박여인"]
+
+
+def test_fullwidth_punctuation_normalized():
+    # OCR 이 전각 괄호/콜론/하이픈/별표를 출력해도 detect_all 경유 시 잡혀야 함
+    found = detect_all("본인 김본인（金本人） 650101－1＊＊＊＊＊＊")
+    assert sorted(d.type for d in found) == ["NAME", "RRN"]
+    found2 = detect_all("신청인 ： 김본인")
+    assert [d.type for d in found2] == ["NAME"]
+
+
 def test_detect_name_keyword():
     found = detect_name("신청인: 홍길동 (서명)")
     assert [f.text for f in found] == ["홍길동"]

@@ -13,6 +13,18 @@ from .models import Detection
 
 _CONFIG_DIR = Path(__file__).resolve().parents[3] / "configs"
 
+# ── 전각→반각 정규화 ─────────────────────────────────────────
+# OCR(특히 CJK 모델)이 괄호·콜론·하이픈·숫자를 전각으로 출력하는 경우가 많다.
+# 1:1 치환이라 문자 오프셋이 보존된다. detect_all 입구에서 적용.
+_FULLWIDTH_TABLE = str.maketrans(
+    "（）：－＊．，／　" + "".join(chr(0xFF10 + i) for i in range(10)),
+    "():-*.,/ " + "0123456789",
+)
+
+
+def normalize_text(text: str) -> str:
+    return text.translate(_FULLWIDTH_TABLE)
+
 # ── 주민등록번호 ──────────────────────────────────────────────
 # 2020.10 이후 발급분은 뒷자리가 무작위라 체크섬이 성립하지 않으므로,
 # 체크섬은 탐지 여부가 아니라 confidence 에만 반영한다.
@@ -205,9 +217,15 @@ _NAME_KEYWORD_RE = re.compile(
     r"수\s*취\s*인|책\s*임\s*관|담\s*당\s*자|설\s*계\s*사|발\s*급\s*인)"
     r"\s*[:：]?\s*([가-힣]{2,4})(?![가-힣])"
 )
+# 가족관계 구분(본인/부/모/배우자/자녀) 뒤 이름 — OCR 이 한자를 전부 한글로
+# 오독하거나 괄호를 잃어도 잡는 최후 보루. 이름 뒤에 괄호나 숫자(생년월일)가
+# 이어지는 경우만 인정해 오탐을 줄인다.
+_NAME_RELATION_RE = re.compile(
+    r"(?<![가-힣])(본인|배우자|자녀|부|모)\s+([가-힣]{2,4})(?= ?\(|\s+\d)"
+)
 _NAME_STOPWORDS = {
     "본인", "성명", "이름", "신청인", "예금주", "세대주", "보호자", "수취인",
-    "대리인", "담당자", "배우자", "자녀", "서명", "날인", "확인", "책임관",
+    "대리인", "담당자", "배우자", "자녀", "서명", "날인", "확인", "책임관", "정보",
 }
 
 
@@ -217,10 +235,12 @@ def detect_name(text: str) -> list[Detection]:
         if m.group(1) in _NAME_STOPWORDS or not _HANJA_RE.search(m.group(2)):
             continue
         out.append(Detection("NAME", m.group(0), m.start(), m.end(), 0.8))
-    for m in _NAME_KEYWORD_RE.finditer(text):
+    matches = ([(m, 0.6) for m in _NAME_KEYWORD_RE.finditer(text)]
+               + [(m, 0.7) for m in _NAME_RELATION_RE.finditer(text)])
+    for m, conf in matches:
         if m.group(2) in _NAME_STOPWORDS:
             continue
-        d = Detection("NAME", m.group(2), m.start(2), m.end(2), 0.6)
+        d = Detection("NAME", m.group(2), m.start(2), m.end(2), conf)
         if not any(d.overlaps(prev) for prev in out):  # 한자 병기 매치가 우선
             out.append(d)
     return out
@@ -244,6 +264,7 @@ _DETECTORS = (detect_rrn, detect_card, detect_phone, detect_email,
 
 
 def detect_all(text: str) -> list[Detection]:
+    text = normalize_text(text)  # 전각 괄호/콜론/숫자 대응 (1:1 치환, 오프셋 보존)
     accepted: list[Detection] = []
     for detector in _DETECTORS:
         for d in detector(text):
