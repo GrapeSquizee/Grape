@@ -52,19 +52,27 @@ class TesseractEngine:
 
 
 class OcrEngine:
-    def __init__(self, lang: str = "korean", enable_doc_orientation: bool = False):
+    def __init__(self, lang: str = "korean", enable_doc_orientation: bool = False,
+                 enable_mkldnn: bool | None = None):
+        self._lang = lang
+        self._doc_orientation = enable_doc_orientation
+        self._mkldnn_fallback_done = enable_mkldnn is False
+        self._ocr, self._api = self._create(enable_mkldnn)
+
+    def _create(self, enable_mkldnn: bool | None):
         from paddleocr import PaddleOCR
+        kwargs = dict(
+            lang=self._lang,
+            use_doc_orientation_classify=self._doc_orientation,
+            use_doc_unwarping=False,
+            use_textline_orientation=True,
+        )
+        if enable_mkldnn is not None:
+            kwargs["enable_mkldnn"] = enable_mkldnn
         try:  # paddleocr >= 3.x
-            self._ocr = PaddleOCR(
-                lang=lang,
-                use_doc_orientation_classify=enable_doc_orientation,
-                use_doc_unwarping=False,
-                use_textline_orientation=True,
-            )
-            self._api = "v3"
+            return PaddleOCR(**kwargs), "v3"
         except TypeError:  # paddleocr 2.x
-            self._ocr = PaddleOCR(lang=lang, use_angle_cls=True, show_log=False)
-            self._api = "v2"
+            return PaddleOCR(lang=self._lang, use_angle_cls=True, show_log=False), "v2"
 
     def read(self, image) -> list[dict]:
         """이미지 → 토큰 목록 [{"text", "bbox": [x1,y1,x2,y2], "conf"}].
@@ -72,7 +80,17 @@ class OcrEngine:
         OCR 는 라인 단위로 반환하므로 축정렬 bbox 로 변환 후, 단어 단위가
         필요하면 라인 bbox 를 공백 기준 비례 분할한다 (PoC 근사).
         """
-        lines = self._read_v3(image) if self._api == "v3" else self._read_v2(image)
+        try:
+            lines = self._read_v3(image) if self._api == "v3" else self._read_v2(image)
+        except NotImplementedError:
+            # Windows CPU 에서 paddle 3.x 의 oneDNN/PIR 변환 버그로
+            # "ConvertPirAttribute2RuntimeAttribute not support ..." 가 난다.
+            # oneDNN 을 끄고 엔진을 재생성해 1회 재시도한다 (추론은 느려짐).
+            if self._api != "v3" or self._mkldnn_fallback_done:
+                raise
+            self._mkldnn_fallback_done = True
+            self._ocr, self._api = self._create(False)
+            lines = self._read_v3(image) if self._api == "v3" else self._read_v2(image)
         tokens = []
         for text, conf, (x1, y1, x2, y2) in lines:
             tokens.extend(self._split_words(text, conf, x1, y1, x2, y2))

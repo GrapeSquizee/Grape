@@ -142,3 +142,7 @@ python -m grape_pii.pipeline image sample.png out.png labels.json `
   안 된다. 한 줄로 붙여 써도 무방
 - 스크립트 출력 한글이 깨짐 → `chcp 65001` 또는 `$OutputEncoding = [Text.Encoding]::UTF8`
 - PaddleOCR 설치 시 PyYAML 충돌(리눅스 데비안 계열) → `pip install --ignore-installed PyYAML ...`
+- PaddleOCR 실행 중 `NotImplementedError: ... ConvertPirAttribute2RuntimeAttribute not support`
+  → paddle 3.x 의 Windows CPU(oneDNN/PIR) 버그. 엔진이 자동으로 oneDNN 을 끄고
+  재시도한다 (`git pull` 로 최신 코드 필요). 추론이 다소 느려질 뿐 결과는 동일.
+  pytest 임시폴더 권한 오류가 나면 → `python -m pytest -q --basetemp .pytest-tmp`
