@@ -18,6 +18,7 @@
 | 전처리 (deskew) | ✅ image 모드에 연결됨 (방향 보정은 OCR 신뢰도 휴리스틱) |
 | OCR — Tesseract(kor) 대체 엔진 | ✅ 동작 (OS 패키지만 필요) |
 | OCR — PaddleOCR 한국어 (주력) | 🔌 래퍼 완성(2.x/3.x 겸용) — 모델 다운로드 가능 환경에서 검증 |
+| VLM 텍스트 교정 (OCR bbox + 로컬 VLM 판독) | 🔌 목 서버 테스트 통과 — 라이브는 로컬 Gemma 등으로 |
 | LLM 탐지 (이름/주소) | 🔌 목 서버 테스트 통과 — 라이브는 NVIDIA NIM 또는 내부 GPT-5.4 로 |
 
 ## 빠른 시작
@@ -40,6 +41,19 @@ python -m grape_pii.pipeline image doc.png redacted.png labels.json \
 
 # LLM 탐지 포함: GRAPE_LLM_BASE_URL=http://<엔드포인트>/v1 설정 후 --use-llm
 ```
+
+VLM 텍스트 교정 (OCR 오독 보정 — 개인정보가 전달되므로 **로컬/내부망 VLM 전용**):
+
+```bash
+# Ollama/LM Studio/vLLM 등 OpenAI 호환 로컬 서버에 멀티모달 모델 로드 후
+export GRAPE_VLM_BASE_URL=http://localhost:11434/v1   # Ollama 기본 포트
+export GRAPE_VLM_MODEL=gemma4-31b-4bit
+python -m grape_pii.pipeline image doc.png out.png labels.json --vlm-correct
+```
+
+동작 방식: OCR 이 bbox 와 1차 텍스트를 만들고, 문서 이미지 + 토큰 목록을
+VLM 에 한 번에 보내(문서당 1회 호출) 오독된 텍스트만 교정받는다.
+저해상도·워터마크·한자 병기 소실 문제를 크게 줄인다.
 
 LLM 라이브 테스트 (OpenAI 호환 — 외부는 NVIDIA NIM, 내부는 GPT-5.4):
 

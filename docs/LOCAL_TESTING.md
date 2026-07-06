@@ -120,6 +120,24 @@ python -m grape_pii.pipeline image sample.png out.png labels.json `
 내부망 GPT-5.4 연결 후에만 한다. 내부망에서는 `$env:GRAPE_LLM_BASE_URL` 을
 내부 엔드포인트로, `$env:GRAPE_LLM_MODEL = "gpt-5.4"` 로 바꾸면 코드 수정 없이 동작한다.
 
+## 3-1. VLM 텍스트 교정 (로컬 Gemma — 실문서 가능)
+
+OCR 오독(중명서/홍질동/한자 소실)을 로컬 VLM 으로 교정한다. 모델이 로컬에서
+돌므로 개인정보가 장비 밖으로 나가지 않는다 → 실문서에도 사용 가능.
+
+```powershell
+# 1) OpenAI 호환 로컬 서버에 멀티모달 모델 로드 (Ollama / LM Studio / vLLM)
+#    예: LM Studio 에서 gemma 4bit 모델 로드 후 로컬 서버 시작 (기본 1234 포트)
+$env:GRAPE_VLM_BASE_URL = "http://localhost:1234/v1"   # Ollama 는 11434
+$env:GRAPE_VLM_MODEL    = "gemma4-31b-4bit"            # 서버에 로드된 모델명 그대로
+
+# 2) 교정 켜서 실행
+python -m grape_pii.pipeline image doc.jpg redacted.png labels.json --vlm-correct --dump-tokens tokens.json
+```
+
+`tokens.json` 에서 `"vlm_corrected": true` 붙은 토큰이 교정된 항목이다.
+문서당 VLM 호출 1회라 30B 급 로컬 모델 기준 수 초~수십 초 걸린다.
+
 ## 4. 결과 체크리스트
 
 | 항목 | 기준 |

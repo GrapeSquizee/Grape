@@ -31,12 +31,21 @@ class LLMClient:
     def available(self) -> bool:
         return bool(self.base_url)
 
-    def chat(self, system: str, user: str) -> str:
+    def chat(self, system: str, user: str, image_png_b64: str | None = None) -> str:
+        """OpenAI 호환 chat. image_png_b64 를 주면 비전 입력(VLM)으로 전송."""
+        if image_png_b64 is not None:
+            user_content = [
+                {"type": "text", "text": user},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/png;base64,{image_png_b64}"}},
+            ]
+        else:
+            user_content = user
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                {"role": "user", "content": user_content},
             ],
             "temperature": 0,
         }

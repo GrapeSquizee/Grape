@@ -94,11 +94,13 @@ def run_image(image_path: str | Path, output_image: str | Path,
               output_labels: str | Path, font_path: str | None = None,
               llm: LLMClient | None = None, seed: int | None = None,
               ocr=None, ocr_engine: str = "paddle",
-              dump_tokens: str | Path | None = None) -> dict:
+              dump_tokens: str | Path | None = None,
+              vlm_correct: bool = False) -> dict:
     """이미지 → 전처리 → OCR → 탐지 → 치환 렌더링 → 라벨.
 
     ocr: 엔진 인스턴스 (재사용을 위해 주입 가능, 없으면 ocr_engine 이름으로 생성).
     font_path: None 이면 OS 별 한글 폰트를 자동 탐색.
+    vlm_correct: OCR 텍스트를 로컬 VLM 으로 교정 (GRAPE_VLM_* 환경변수 필요).
     """
     import cv2
     from PIL import Image
@@ -117,6 +119,9 @@ def run_image(image_path: str | Path, output_image: str | Path,
 
     if ocr is None:
         ocr = create_engine(ocr_engine)
+    if vlm_correct:
+        from .ocr.vlm import VlmReader
+        ocr = VlmReader(ocr)
     tokens = ocr.read(image)
 
     if dump_tokens is not None:
@@ -160,6 +165,8 @@ def main() -> None:
     p_img.add_argument("--ocr-engine", choices=("paddle", "tesseract"), default="paddle")
     p_img.add_argument("--dump-tokens", default=None, metavar="PATH",
                        help="OCR 토큰을 JSON 으로 저장 (탐지 안 될 때 OCR 품질 진단용)")
+    p_img.add_argument("--vlm-correct", action="store_true",
+                       help="OCR 텍스트를 로컬 VLM 으로 교정 (GRAPE_VLM_BASE_URL 필요)")
 
     for p in (p_text, p_img):
         p.add_argument("--use-llm", action="store_true",
@@ -175,7 +182,8 @@ def main() -> None:
     else:
         result = run_image(args.image, args.output_image, args.output_labels,
                            font_path=args.font, llm=llm, seed=args.seed,
-                           ocr_engine=args.ocr_engine, dump_tokens=args.dump_tokens)
+                           ocr_engine=args.ocr_engine, dump_tokens=args.dump_tokens,
+                           vlm_correct=args.vlm_correct)
         print(f"entities: {len(result['entities'])} → {args.output_image}, {args.output_labels}")
 
 
