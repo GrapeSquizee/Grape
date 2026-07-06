@@ -93,7 +93,8 @@ def _entity_bbox(ent: dict, tokens: list[dict]) -> list[float] | None:
 def run_image(image_path: str | Path, output_image: str | Path,
               output_labels: str | Path, font_path: str,
               llm: LLMClient | None = None, seed: int | None = None,
-              ocr=None, ocr_engine: str = "paddle") -> dict:
+              ocr=None, ocr_engine: str = "paddle",
+              dump_tokens: str | Path | None = None) -> dict:
     """이미지 → 전처리 → OCR → 탐지 → 치환 렌더링 → 라벨.
 
     ocr: 엔진 인스턴스 (재사용을 위해 주입 가능, 없으면 ocr_engine 이름으로 생성).
@@ -113,6 +114,11 @@ def run_image(image_path: str | Path, output_image: str | Path,
     if ocr is None:
         ocr = create_engine(ocr_engine)
     tokens = ocr.read(image)
+
+    if dump_tokens is not None:
+        # OCR 진단용 — 원본 텍스트가 그대로 담기므로 실문서에서는 확인 후 폐기할 것
+        with open(dump_tokens, "w", encoding="utf-8") as f:
+            json.dump({"tokens": tokens}, f, ensure_ascii=False, indent=2)
 
     result = run_text(tokens, llm=llm, seed=seed)
 
@@ -147,6 +153,8 @@ def main() -> None:
     p_img.add_argument("output_labels", help="라벨 출력 JSON 경로")
     p_img.add_argument("--font", default="/usr/share/fonts/truetype/nanum/NanumGothic.ttf")
     p_img.add_argument("--ocr-engine", choices=("paddle", "tesseract"), default="paddle")
+    p_img.add_argument("--dump-tokens", default=None, metavar="PATH",
+                       help="OCR 토큰을 JSON 으로 저장 (탐지 안 될 때 OCR 품질 진단용)")
 
     for p in (p_text, p_img):
         p.add_argument("--use-llm", action="store_true",
@@ -162,7 +170,7 @@ def main() -> None:
     else:
         result = run_image(args.image, args.output_image, args.output_labels,
                            font_path=args.font, llm=llm, seed=args.seed,
-                           ocr_engine=args.ocr_engine)
+                           ocr_engine=args.ocr_engine, dump_tokens=args.dump_tokens)
         print(f"entities: {len(result['entities'])} → {args.output_image}, {args.output_labels}")
 
 

@@ -16,7 +16,10 @@ _CONFIG_DIR = Path(__file__).resolve().parents[3] / "configs"
 # ── 주민등록번호 ──────────────────────────────────────────────
 # 2020.10 이후 발급분은 뒷자리가 무작위라 체크섬이 성립하지 않으므로,
 # 체크섬은 탐지 여부가 아니라 confidence 에만 반영한다.
+# 증명서 견본류는 뒷자리가 마스킹된 형태(650101-1******)로 나오므로 함께 탐지한다.
+# OCR 이 * 를 ●·× 등으로 오독하는 경우까지 마스크 문자로 허용한다.
 _RRN_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9]\d{6})(?![\d-])")
+_RRN_MASKED_RE = re.compile(r"(?<![\d-])(\d{6})[- ]?([0-9])([*●○•xX×＊]{6})")
 _RRN_WEIGHTS = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
 _GENDER_CENTURY = {"1": 1900, "2": 1900, "3": 2000, "4": 2000,
                    "5": 1900, "6": 1900, "7": 2000, "8": 2000,
@@ -48,6 +51,10 @@ def detect_rrn(text: str) -> list[Detection]:
         digits = front + back
         conf = 1.0 if rrn_checksum(digits[:12]) == int(digits[12]) else 0.8
         out.append(Detection("RRN", m.group(0), m.start(), m.end(), conf))
+    for m in _RRN_MASKED_RE.finditer(text):
+        if not _valid_rrn_date(m.group(1), m.group(2)):
+            continue
+        out.append(Detection("RRN", m.group(0), m.start(), m.end(), 0.9))
     return out
 
 
@@ -143,6 +150,54 @@ def detect_phone(text: str) -> list[Detection]:
     ]
 
 
+# ── 생년월일/날짜 ────────────────────────────────────────────
+# 1965년 01월 01일 / 1965.1.1 / 1965-01-01 형태. 발급일 등 비개인 날짜도
+# 함께 잡히지만, 학습데이터 익명화 관점에서는 모두 치환해도 잃는 것이 없다
+# (재현율 우선). 단 생년월일-주민번호 앞자리 일관성은 아직 연동하지 않는다.
+_DATE_RE = re.compile(
+    r"(?<!\d)((?:19|20)\d{2})[년.\-/]\s*(\d{1,2})[월.\-/]\s*(\d{1,2})일?(?!\d)"
+)
+
+
+def detect_date(text: str) -> list[Detection]:
+    out = []
+    for m in _DATE_RE.finditer(text):
+        month, day = int(m.group(2)), int(m.group(3))
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            continue
+        out.append(Detection("DATE", m.group(0), m.start(), m.end(), 0.8))
+    return out
+
+
+# ── 이름 (룰 보조) ───────────────────────────────────────────
+# 문맥 전체를 보는 이름 탐지는 LLM 담당이지만, 형태만으로 확실한 두 경우는
+# 룰로 잡는다: ① 한자 병기 이름 "김본인(金本人)" ② 성명/신청인 등 라벨 뒤 이름.
+_NAME_HANJA_RE = re.compile(r"[가-힣]{2,4}\([^)\s]{1,8}\)")
+_NAME_KEYWORD_RE = re.compile(
+    r"(성\s*명|이\s*름|신\s*청\s*인|예\s*금\s*주|세\s*대\s*주|보\s*호\s*자|수\s*취\s*인)"
+    r"\s*[:：]?\s*([가-힣]{2,4})(?![가-힣])"
+)
+_NAME_STOPWORDS = {
+    "본인", "성명", "이름", "신청인", "예금주", "세대주", "보호자", "수취인",
+    "대리인", "담당자", "배우자", "자녀", "서명", "날인", "확인",
+}
+
+
+def detect_name(text: str) -> list[Detection]:
+    out = []
+    for m in _NAME_HANJA_RE.finditer(text):
+        if m.group(0).split("(")[0] in _NAME_STOPWORDS:
+            continue
+        out.append(Detection("NAME", m.group(0), m.start(), m.end(), 0.8))
+    for m in _NAME_KEYWORD_RE.finditer(text):
+        if m.group(2) in _NAME_STOPWORDS:
+            continue
+        d = Detection("NAME", m.group(2), m.start(2), m.end(2), 0.6)
+        if not any(d.overlaps(prev) for prev in out):  # 한자 병기 매치가 우선
+            out.append(d)
+    return out
+
+
 # ── 이메일 ──────────────────────────────────────────────────
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
@@ -156,7 +211,8 @@ def detect_email(text: str) -> list[Detection]:
 
 # ── 통합 ────────────────────────────────────────────────────
 # 우선순위: 겹치는 스팬은 먼저 탐지된(더 특이적인) 타입이 이긴다.
-_DETECTORS = (detect_rrn, detect_card, detect_phone, detect_email, detect_account)
+_DETECTORS = (detect_rrn, detect_card, detect_phone, detect_email,
+              detect_account, detect_date, detect_name)
 
 
 def detect_all(text: str) -> list[Detection]:

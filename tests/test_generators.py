@@ -29,6 +29,13 @@ def test_card_replacement_luhn_valid():
         assert luhn_ok(rep.replace("-", ""))
 
 
+def test_masked_rrn_replacement_keeps_mask():
+    rng = random.Random(0)
+    rep = make_replacement("RRN", "650101-1******", rng)
+    assert rep.endswith("******") and rep[6] == "-" and len(rep) == 14
+    assert [d.type for d in detect_all(f"번호 {rep} 끝")] == ["RRN"]
+
+
 def test_phone_replacement_keeps_prefix():
     rep = make_replacement("PHONE", "010-1234-5678", random.Random(0))
     assert rep.startswith("010-") and len(rep) == 13
@@ -38,6 +45,15 @@ def test_account_replacement_format():
     rep = make_replacement("ACCOUNT", "123456-01-234567", random.Random(0))
     parts = rep.split("-")
     assert [len(p) for p in parts] == [6, 2, 6]
+
+
+def test_date_replacement_keeps_separators():
+    rng = random.Random(0)
+    rep = make_replacement("DATE", "1965년 01월 01일", rng)
+    assert rep.endswith("일") and "년 " in rep and "월 " in rep
+    assert rep != "1965년 01월 01일"
+    dotted = make_replacement("DATE", "2020.11.04", rng)
+    assert dotted.count(".") == 2
 
 
 def test_name_and_address_nonempty():

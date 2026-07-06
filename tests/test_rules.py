@@ -2,8 +2,8 @@
 import random
 
 from grape_pii.detect.rules import (
-    detect_account, detect_all, detect_card, detect_email, detect_phone,
-    detect_rrn, luhn_ok, rrn_checksum,
+    detect_account, detect_all, detect_card, detect_date, detect_email,
+    detect_name, detect_phone, detect_rrn, luhn_ok, rrn_checksum,
 )
 from grape_pii.synth.generators import make_card_digits, make_rrn_digits
 
@@ -30,6 +30,18 @@ def test_detect_rrn_post2020_random_tail():
     found = detect_rrn("번호 010203-4999999 끝")
     assert len(found) == 1
     assert found[0].confidence == 0.8
+
+
+def test_detect_rrn_masked_tail():
+    # 증명서 견본의 마스킹 형태 (뒷자리 * 처리) 도 탐지해야 함
+    for text in ("650101-1******", "400401-1******", "번호 030201-3●●●●●● 끝"):
+        found = detect_rrn(text)
+        assert len(found) == 1, text
+        assert found[0].confidence == 0.9
+
+
+def test_masked_rrn_invalid_date_rejected():
+    assert detect_rrn("651301-1******") == []  # 13월
 
 
 def test_rrn_invalid_date_rejected():
@@ -77,6 +89,38 @@ def test_detect_account_with_context():
 def test_detect_account_without_context_lower_conf():
     found = detect_account("번호는 123456-01-234567 입니다")
     assert found and found[0].confidence == 0.6
+
+
+def test_detect_date_formats():
+    for text in ("1965년 01월 01일", "1965.1.1", "2003-02-01", "출생 1942년 04월 02일 끝"):
+        assert len(detect_date(text)) == 1, text
+
+
+def test_detect_date_invalid_rejected():
+    assert detect_date("2020년 13월 01일") == []
+    assert detect_date("1234-56-78") == []
+
+
+def test_detect_name_hanja():
+    found = detect_name("성명 김본인(金本人) 출생")
+    assert len(found) == 1
+    assert found[0].text == "김본인(金本人)"
+
+
+def test_detect_name_keyword():
+    found = detect_name("신청인: 홍길동 (서명)")
+    assert [f.text for f in found] == ["홍길동"]
+
+
+def test_detect_name_stopwords_excluded():
+    assert detect_name("성명 본인 확인") == []
+
+
+def test_family_cert_like_row_detected():
+    # 가족관계증명서 견본 형태: 한자병기 이름 + 생년월일 + 마스킹 주민번호
+    text = "본인 김본인(金本人) 1965년 01월 01일 650101-1****** 남 金海"
+    types = sorted(d.type for d in detect_all(text))
+    assert types == ["DATE", "NAME", "RRN"]
 
 
 def test_detect_all_no_overlap():

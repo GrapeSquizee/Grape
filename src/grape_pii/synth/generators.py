@@ -80,9 +80,30 @@ def make_digits(n: int, rng: random.Random | None = None) -> str:
     return "".join(str(r.randint(0, 9)) for _ in range(n))
 
 
+def make_date_like(original: str, rng: random.Random | None = None) -> str:
+    """원본 날짜 문자열의 구분자(년/월/일, ., -)를 유지하며 임의 날짜로 교체.
+
+    숫자 묶음이 (연, 월, 일) 3개가 아니면 자릿수만 보존해 무작위 숫자로 교체.
+    """
+    r = _rng(rng)
+    runs = list(re.finditer(r"\d+", original))
+    if len(runs) != 3:
+        return preserve_format(original, make_digits(sum(ch.isdigit() for ch in original), r))
+    year, month, day = r.randint(1940, 2015), r.randint(1, 12), r.randint(1, 28)
+    values = [str(year), f"{month:0{len(runs[1].group(0))}d}", f"{day:0{len(runs[2].group(0))}d}"]
+    out, cursor = [], 0
+    for run, val in zip(runs, values):
+        out.append(original[cursor:run.start()])
+        out.append(val)
+        cursor = run.end()
+    out.append(original[cursor:])
+    return "".join(out)
+
+
 def make_name(rng: random.Random | None = None) -> str:
     r = _rng(rng)
     if _faker is not None:
+        _faker.seed_instance(r.getrandbits(32))  # 전역 상태 제거 — rng 재현성 보장
         return _faker.name()
     return r.choice(_SURNAMES) + r.choice(_GIVEN)
 
@@ -90,6 +111,7 @@ def make_name(rng: random.Random | None = None) -> str:
 def make_address(rng: random.Random | None = None) -> str:
     r = _rng(rng)
     if _faker is not None:
+        _faker.seed_instance(r.getrandbits(32))
         return _faker.address()
     return f"{r.choice(_CITIES)} {r.choice(_DISTRICTS)} {r.choice(_ROADS)} {r.randint(1, 200)}"
 
@@ -110,6 +132,8 @@ def make_replacement(entity_type: str, original: str, rng: random.Random | None 
             prefix = m.group(0) if m else "010"
             digits = prefix + digits[len(prefix):]
         return preserve_format(original, digits)
+    if entity_type == "DATE":
+        return make_date_like(original, r)
     if entity_type == "NAME":
         return make_name(r)
     if entity_type == "ADDRESS":
