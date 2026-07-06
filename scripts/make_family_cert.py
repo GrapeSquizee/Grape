@@ -13,9 +13,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from grape_pii.render.fonts import resolve_font
 from grape_pii.synth.generators import make_address, make_name, make_rrn_digits
-
-DEFAULT_FONT = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
 BON_LIST = ["김해(金海)", "밀양(密陽)", "전주(全州)", "경주(慶州)", "파평(坡平)", "안동(安東)"]
 _CENTURY = {"1": 1900, "2": 1900, "3": 2000, "4": 2000}
 
@@ -120,11 +119,11 @@ def build(font_path: str, seed: int) -> Image.Image:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output")
-    parser.add_argument("--font", default=DEFAULT_FONT)
+    parser.add_argument("--font", default=None, help="한글 폰트 경로 (미지정 시 자동 탐색)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    build(args.font, args.seed).save(args.output)
+    build(resolve_font(args.font), args.seed).save(args.output)
     print(f"saved: {args.output}")
 
 

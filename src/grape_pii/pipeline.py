@@ -91,20 +91,24 @@ def _entity_bbox(ent: dict, tokens: list[dict]) -> list[float] | None:
 
 
 def run_image(image_path: str | Path, output_image: str | Path,
-              output_labels: str | Path, font_path: str,
+              output_labels: str | Path, font_path: str | None = None,
               llm: LLMClient | None = None, seed: int | None = None,
               ocr=None, ocr_engine: str = "paddle",
               dump_tokens: str | Path | None = None) -> dict:
     """이미지 → 전처리 → OCR → 탐지 → 치환 렌더링 → 라벨.
 
     ocr: 엔진 인스턴스 (재사용을 위해 주입 가능, 없으면 ocr_engine 이름으로 생성).
+    font_path: None 이면 OS 별 한글 폰트를 자동 탐색.
     """
     import cv2
     from PIL import Image
 
     from .ocr.engine import create_engine
     from .preprocess.geometry import deskew
+    from .render.fonts import resolve_font
     from .render.redact import replace_text_region
+
+    font_path = resolve_font(font_path)
 
     image = cv2.imread(str(image_path))
     if image is None:
@@ -151,7 +155,8 @@ def main() -> None:
     p_img.add_argument("image", help="입력 문서 이미지")
     p_img.add_argument("output_image", help="치환 완료 이미지 경로")
     p_img.add_argument("output_labels", help="라벨 출력 JSON 경로")
-    p_img.add_argument("--font", default="/usr/share/fonts/truetype/nanum/NanumGothic.ttf")
+    p_img.add_argument("--font", default=None,
+                       help="한글 폰트 경로 (미지정 시 OS 별 자동 탐색)")
     p_img.add_argument("--ocr-engine", choices=("paddle", "tesseract"), default="paddle")
     p_img.add_argument("--dump-tokens", default=None, metavar="PATH",
                        help="OCR 토큰을 JSON 으로 저장 (탐지 안 될 때 OCR 품질 진단용)")

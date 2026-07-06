@@ -11,11 +11,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from grape_pii.render.fonts import resolve_font
 from grape_pii.synth.generators import (
     make_address, make_card_digits, make_name, make_rrn_digits,
 )
-
-DEFAULT_FONT = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
 
 
 def build(font_path: str, seed: int) -> Image.Image:
@@ -55,11 +54,11 @@ def build(font_path: str, seed: int) -> Image.Image:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output")
-    parser.add_argument("--font", default=DEFAULT_FONT)
+    parser.add_argument("--font", default=None, help="한글 폰트 경로 (미지정 시 자동 탐색)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    build(args.font, args.seed).save(args.output)
+    build(resolve_font(args.font), args.seed).save(args.output)
     print(f"saved: {args.output}")
 
 
