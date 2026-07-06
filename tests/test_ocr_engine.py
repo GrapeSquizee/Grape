@@ -53,7 +53,7 @@ def test_mkldnn_fallback_on_notimplemented(stub_paddleocr):
     assert stub_paddleocr.init_calls[1]["enable_mkldnn"] is False
 
     assert [t["text"] for t in tokens] == ["주민등록번호", "900101-1234567"]
-    assert tokens[1]["bbox"] == (110.0, 10.0, 250.0, 30.0)
+    assert tokens[1]["bbox"] == [110.0, 10.0, 250.0, 30.0]
 
 
 def test_mkldnn_fallback_runs_once(stub_paddleocr):
